@@ -18,7 +18,6 @@ from playwright.async_api import async_playwright
 # Constants
 # =============================================================================
 
-DEFAULT_COURSE_URL = "https://learn.microsoft.com/en-us/training/courses/ai-102t00"
 CATALOG_API_URL = "https://learn.microsoft.com/api/catalog/"
 OUTPUT_BASE_DIR = "output"
 REQUEST_TIMEOUT = 30
@@ -144,6 +143,21 @@ class CatalogService:
                 path_urls.append(self._clean_url(url))
 
         return path_urls
+
+    def get_available_courses(self) -> list[dict[str, str]]:
+        """Get available courses from the catalog as title/url dictionaries."""
+        catalog = self.catalog
+        if not catalog:
+            return []
+
+        courses = []
+        for course in catalog.get("courses", []):
+            url = course.get("url")
+            title = course.get("title")
+            if url and title:
+                courses.append({"title": title, "url": self._clean_url(url)})
+
+        return sorted(courses, key=lambda c: c["title"].lower())
 
     def get_learning_path_modules(self, path_url: str) -> list[str]:
         """Get all module URLs for a learning path."""
@@ -597,13 +611,49 @@ class CourseProcessor:
 # =============================================================================
 
 
-def get_course_url_from_user(default_url: str = DEFAULT_COURSE_URL) -> str:
-    """Prompt user for course URL with default value."""
-    print(
-        f"Enter the Microsoft Learn course URL (press Enter to use default: {default_url}):"
-    )
-    course_url = input("> ").strip()
-    return course_url if course_url else default_url
+def get_course_url_from_user(catalog_service: CatalogService) -> Optional[str]:
+    """Prompt user to select a course from catalog results, optionally filtered by topic."""
+    courses = catalog_service.get_available_courses()
+    if not courses:
+        print("No courses available in catalog.")
+        return None
+
+    topic = input(
+        "\nEnter a topic to filter courses (example: AI). Press Enter to show all: "
+    ).strip()
+
+    filtered_courses = courses
+    if topic:
+        topic_lower = topic.lower()
+        filtered_courses = [
+            course for course in courses if topic_lower in course["title"].lower()
+        ]
+
+        if not filtered_courses:
+            print(f"No courses found for topic '{topic}'.")
+            use_all = input("Show all courses instead? (y/n): ").strip().lower()
+            if use_all != "y":
+                return None
+            filtered_courses = courses
+
+    print("\nSelect a Microsoft Learn course:\n")
+    for i, course in enumerate(filtered_courses, 1):
+        print(f"{i}. {course['title']}")
+        print(f"   {course['url']}")
+
+    while True:
+        raw_value = input("\nEnter course number: ").strip()
+        if not raw_value.isdigit():
+            print("Invalid selection. Please enter a valid number.")
+            continue
+
+        selection = int(raw_value)
+        if 1 <= selection <= len(filtered_courses):
+            return filtered_courses[selection - 1]["url"]
+
+        print(
+            f"Invalid selection. Please choose a number between 1 and {len(filtered_courses)}."
+        )
 
 
 # =============================================================================
@@ -613,8 +663,10 @@ def get_course_url_from_user(default_url: str = DEFAULT_COURSE_URL) -> str:
 
 def main() -> list[str]:
     """Main entry point."""
-    course_url = get_course_url_from_user()
     processor = CourseProcessor()
+    course_url = get_course_url_from_user(processor.catalog_service)
+    if not course_url:
+        return []
     return processor.process_course(course_url)
 
 
